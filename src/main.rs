@@ -22,6 +22,7 @@ fn main() {
     let mut initialized = true;
     let micbuf_size: usize = 0x30000;
     let mut micbuf_pos: usize = 0;
+    // not sure why the original example had this alignment, I'm not a low level programming pro, I just copied it.
     let micbuf_layout = Layout::from_size_align(micbuf_size, 0x1000).expect("Invalid layout");
     // allocating a mic buffer on the global allocator
     let micbuf = unsafe { alloc(micbuf_layout) };
