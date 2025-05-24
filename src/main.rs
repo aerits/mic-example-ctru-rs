@@ -23,6 +23,7 @@ fn main() {
     let micbuf_size: usize = 0x30000;
     let mut micbuf_pos: usize = 0;
     let micbuf_layout = Layout::from_size_align(micbuf_size, 0x1000).expect("Invalid layout");
+    // allocating a mic buffer on the global allocator
     let micbuf = unsafe { alloc(micbuf_layout) };
     if micbuf.is_null() {
         panic!("Memory allocation failed");
@@ -42,6 +43,7 @@ fn main() {
     };
     const audiobuf_size: usize = 0x100000;
     let mut audiobuf_pos = 0;
+    // LinearAllocator in ctru-rs crashes the 3ds when I try to box it, so I'm just using it raw
     let audiobuf = LinearAllocator
         .allocate_zeroed(Layout::new::<[u8; audiobuf_size]>())
         .unwrap()
