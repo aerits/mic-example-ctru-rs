@@ -8,11 +8,12 @@ use ctru_sys::{
     SOUND_FORMAT_16BIT, SOUND_ONE_SHOT, csndExit, csndInit, csndPlaySound, micExit,
     micGetLastSampleOffset, micGetSampleDataSize, micInit,
 };
+use mic::MicCTRU;
 use std::{
     alloc::{Allocator, Layout, alloc, dealloc},
     ptr::{NonNull, null, null_mut},
 };
-
+mod mic;
 fn main() {
     let gfx = Gfx::new().expect("Couldn't obtain GFX controller");
     let mut hid = Hid::new().expect("Couldn't obtain HID controller");
@@ -20,27 +21,14 @@ fn main() {
     let _console = Console::new(gfx.top_screen.borrow_mut());
 
     let mut initialized = true;
-    let micbuf_size: usize = 0x30000;
+    let mut mic = MicCTRU::new(0x300000).unwrap();
     let mut micbuf_pos: usize = 0;
-    // not sure why the original example had this alignment, I'm not a low level programming pro, I just copied it.
-    let micbuf_layout = Layout::from_size_align(micbuf_size, 0x1000).expect("Invalid layout");
-    // allocating a mic buffer on the global allocator
-    let micbuf = unsafe { alloc(micbuf_layout) };
-    if micbuf.is_null() {
-        panic!("Memory allocation failed");
-    }
-    let micbuf_datasize = unsafe {
+    unsafe {
         println!("initializing CSND...");
         if R_FAILED(csndInit()) {
             println!("failed to initialize csnd");
             initialized = false;
         }
-        println!("initializing mic");
-        if R_FAILED(micInit(micbuf, micbuf_size as u32)) {
-            println!("could not initialize mic");
-            initialized = false;
-        }
-        micGetSampleDataSize()
     };
     const audiobuf_size: usize = 0x100000;
     let mut audiobuf_pos = 0;
@@ -68,18 +56,9 @@ fn main() {
                     println!("failed to stop audio playback")
                 }
                 println!("Starting sampling");
-                if R_SUCCEEDED(MICU_StartSampling(
-                    MICU_ENCODING_PCM16_SIGNED,
-                    MICU_SAMPLE_RATE_16360,
-                    0,
-                    micbuf_datasize,
-                    true,
-                )) {
-                    println!("Now recording")
-                } else {
-                    println!("Failed to start sampling")
-                }
+                
             };
+            mic.start_recording().unwrap();
         }
         if hid.keys_held().contains(KeyPad::A) {
             let mut micbuf_readpos = micbuf_pos;
@@ -87,17 +66,15 @@ fn main() {
             while audiobuf_pos < audiobuf_size && micbuf_readpos != micbuf_pos {
                 unsafe {
                     *audiobuf.offset(audiobuf_pos as isize) =
-                        *micbuf.offset(micbuf_readpos as isize);
+                        *mic.micbuf.offset(micbuf_readpos as isize);
                     audiobuf_pos += 1;
-                    micbuf_readpos = (micbuf_readpos + 1) % micbuf_datasize as usize;
+                    micbuf_readpos = (micbuf_readpos + 1) % mic.micbuf_datasize as usize;
                 }
             }
         }
         if hid.keys_up().contains(KeyPad::A) {
             println!("Stopping sampling");
-            if R_FAILED(unsafe { MICU_StopSampling() }) {
-                println!("Failed to stop sampling")
-            }
+            mic.stop_recording().unwrap();
             println!("starting audio playback");
             if unsafe {
                 R_SUCCEEDED(GSPGPU_FlushDataCache(audiobuf.cast(), audiobuf_size as u32))
@@ -120,8 +97,7 @@ fn main() {
         gfx.wait_for_vblank();
     }
     unsafe {
-        micExit();
-        dealloc(micbuf, micbuf_layout);
+        
         LinearAllocator.deallocate(
             NonNull::new_unchecked(audiobuf),
             Layout::new::<[u8; audiobuf_size]>(),
