@@ -1,7 +1,11 @@
 #![feature(allocator_api, slice_ptr_get)]
-/// Unsafe microphone example for libctru 
+/// Unsafe microphone example for libctru
 /// https://github.com/devkitPro/3ds-examples/tree/master/audio/mic mostly a 1-to-1 copy of this
-use ctru::{linear::LinearAllocator, prelude::*};
+use ctru::{
+    linear::LinearAllocator,
+    prelude::*,
+    services::ndsp::{AudioFormat, AudioMix, InterpolationType, Ndsp, OutputMode, wave::Wave},
+};
 use ctru_sys::{
     CSND_SetPlayState, CSND_UpdateInfo, GSPGPU_FlushDataCache, MICU_ENCODING_PCM16_SIGNED,
     MICU_SAMPLE_RATE_16360, MICU_StartSampling, MICU_StopSampling, R_FAILED, R_SUCCEEDED,
@@ -21,22 +25,22 @@ fn main() {
     let _console = Console::new(gfx.top_screen.borrow_mut());
 
     let mut initialized = true;
-    let mut mic = MicCTRU::new(0x300000).unwrap();
+    let mut mic = MicCTRU::new(0x30000).unwrap();
     let mut micbuf_pos: usize = 0;
-    unsafe {
-        println!("initializing CSND...");
-        if R_FAILED(csndInit()) {
-            println!("failed to initialize csnd");
-            initialized = false;
-        }
-    };
-    const audiobuf_size: usize = 0x100000;
-    let mut audiobuf_pos = 0;
-    // LinearAllocator in ctru-rs crashes the 3ds when I try to box it, so I'm just using it raw
-    let audiobuf = LinearAllocator
-        .allocate_zeroed(Layout::new::<[u8; audiobuf_size]>())
-        .unwrap()
-        .as_mut_ptr();
+    println!("Initializing mic");
+
+    let mut ndsp = Ndsp::new().expect("Couldn't obtain NDSP controller");
+    println!("initializing ndsp");
+    ndsp.set_output_mode(OutputMode::Mono);
+    let mut channel_zero = ndsp.channel(0).unwrap();
+    channel_zero.set_interpolation(InterpolationType::Linear);
+    channel_zero.set_sample_rate(16360 as f32);
+    channel_zero.set_format(AudioFormat::PCM16Mono);
+    let mix = AudioMix::default();
+    channel_zero.set_mix(&mix);
+
+    // wave needs to stay alive
+    let mut wave_info1;
 
     while apt.main_loop() {
         hid.scan_input();
@@ -47,61 +51,51 @@ fn main() {
             continue;
         }
         if hid.keys_down().contains(KeyPad::A) {
-            audiobuf_pos = 0;
-            micbuf_pos = 0;
+            // audiobuf_pos = 0;
+            // micbuf_pos = 0;
             println!("Stopping audio playback");
-            unsafe {
-                CSND_SetPlayState(0x8, 0);
-                if R_FAILED(CSND_UpdateInfo(false)) {
-                    println!("failed to stop audio playback")
-                }
-                println!("Starting sampling");
-                
-            };
+            channel_zero.clear_queue();
             mic.start_recording().unwrap();
         }
         if hid.keys_held().contains(KeyPad::A) {
-            let mut micbuf_readpos = micbuf_pos;
-            micbuf_pos = unsafe { micGetLastSampleOffset() as usize };
-            while audiobuf_pos < audiobuf_size && micbuf_readpos != micbuf_pos {
-                unsafe {
-                    *audiobuf.offset(audiobuf_pos as isize) =
-                        *mic.micbuf.offset(micbuf_readpos as isize);
-                    audiobuf_pos += 1;
-                    micbuf_readpos = (micbuf_readpos + 1) % mic.micbuf_datasize as usize;
-                }
-            }
+            // let mut micbuf_readpos = micbuf_pos;
+            // micbuf_pos = unsafe { micGetLastSampleOffset() as usize };
+            // while audiobuf_pos < audiobuf_size && micbuf_readpos != micbuf_pos {
+            //     unsafe {
+            //         *audiobuf.offset(audiobuf_pos as isize) =
+            //             *mic.micbuf.offset(micbuf_readpos as isize);
+            //         audiobuf_pos += 1;
+            //         micbuf_readpos = (micbuf_readpos + 1) % mic.micbuf_datasize as usize;
+            //     }
+            // }
         }
         if hid.keys_up().contains(KeyPad::A) {
             println!("Stopping sampling");
             mic.stop_recording().unwrap();
             println!("starting audio playback");
-            if unsafe {
-                R_SUCCEEDED(GSPGPU_FlushDataCache(audiobuf.cast(), audiobuf_size as u32))
-                    && R_SUCCEEDED(csndPlaySound(
-                        0x8,
-                        (SOUND_ONE_SHOT | SOUND_FORMAT_16BIT).into(),
-                        16360,
-                        1.0,
-                        0.0,
-                        audiobuf.cast(),
-                        null_mut(),
-                        audiobuf_pos as u32,
-                    ))
-            } {
-                println!("now playing");
+            let mic_data = mic.get_mic_buf();
+            // Box::new_in(...) doesn't work for me
+            let heap_data = LinearAllocator
+                .allocate_zeroed(Layout::from_size_align(mic_data.len(), 1).unwrap())
+                .unwrap();
+            let mut audio_data1 = unsafe { Box::from_non_null_in(heap_data, LinearAllocator) };
+
+            audio_data1.copy_from_slice(mic_data);
+            wave_info1 = Wave::new(audio_data1, AudioFormat::PCM16Mono, false);
+            if let Err(e) = channel_zero.queue_wave(&mut wave_info1) {
+                println!("Failed to start playback")
             } else {
-                println!("failed to start playback");
+                println!("Now Playing");
             }
         }
         gfx.wait_for_vblank();
     }
-    unsafe {
-        
-        LinearAllocator.deallocate(
-            NonNull::new_unchecked(audiobuf),
-            Layout::new::<[u8; audiobuf_size]>(),
-        );
-        csndExit();
-    }
+    // unsafe {
+
+    //     LinearAllocator.deallocate(
+    //         NonNull::new_unchecked(audiobuf),
+    //         Layout::new::<[u8; audiobuf_size]>(),
+    //     );
+    //     csndExit();
+    // }
 }

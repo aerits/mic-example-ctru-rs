@@ -1,7 +1,7 @@
 use std::alloc::{Layout, alloc, dealloc};
 
 use ctru_sys::{
-    micExit, micGetLastSampleOffset, micGetSampleDataSize, micInit, MICU_StartSampling, MICU_StopSampling, MICU_ENCODING_PCM16_SIGNED, MICU_SAMPLE_RATE_16360, R_FAILED, R_SUCCEEDED
+    micExit, micGetLastSampleOffset, micGetSampleDataSize, micInit, MICU_StartSampling, MICU_StopSampling, MICU_ENCODING_PCM16, MICU_ENCODING_PCM16_SIGNED, MICU_SAMPLE_RATE_16360, R_FAILED, R_SUCCEEDED
 };
 
 pub struct MicCTRU {
